@@ -30,6 +30,38 @@
 #include <linux/errqueue.h>
 #endif
 
+uint64_t us_loop_monotonic_ns(void) {
+#ifdef LIBUS_USE_LIBUV
+    return uv_hrtime();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+#endif
+}
+
+/* Fills *idle_ns_out / *active_ns_out with the loop's accumulated idle time and
+ * the active (non-idle) time since the loop was created. Thread-safe: the idle
+ * counter is read atomically and the creation timestamp is immutable, so the
+ * parent thread can sample a worker's loop. */
+void us_loop_event_loop_utilization(struct us_loop_t *loop, uint64_t *idle_ns_out, uint64_t *active_ns_out) {
+    if (!loop) {
+        *idle_ns_out = 0;
+        *active_ns_out = 0;
+        return;
+    }
+#ifdef LIBUS_USE_LIBUV
+    uint64_t idle_ns = uv_metrics_idle_time(loop->uv_loop);
+#else
+    uint64_t idle_ns = __atomic_load_n(&loop->data.idle_time_ns, __ATOMIC_RELAXED);
+#endif
+    uint64_t created_ns = loop->data.creation_monotonic_ns;
+    uint64_t now_ns = us_loop_monotonic_ns();
+    uint64_t elapsed_ns = (created_ns && now_ns > created_ns) ? (now_ns - created_ns) : 0;
+    *idle_ns_out = idle_ns;
+    *active_ns_out = elapsed_ns > idle_ns ? elapsed_ns - idle_ns : 0;
+}
+
 #if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
 #elif !defined(ASSERT_ENABLED)
@@ -73,9 +105,7 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
 
 static long long us_internal_monotonic_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (long long) ts.tv_sec * 1000000000LL + (long long) ts.tv_nsec;
+    return (long long) us_loop_monotonic_ns();
 }
 
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
@@ -120,6 +150,7 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
+    loop->data.creation_monotonic_ns = us_loop_monotonic_ns();
 #ifdef LIBUS_USE_LIBUV
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
 #else
