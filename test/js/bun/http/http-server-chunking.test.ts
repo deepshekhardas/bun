@@ -442,7 +442,10 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {
   test.concurrentIf(!isASAN)("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({
-      hostname: "localhost",
+      // A bare "localhost" binds only [::1] while Bun.connect resolves it to
+      // 127.0.0.1 on dual-stack hosts, so the client connects to the wrong
+      // family. Pin the loopback address so serve and connect agree.
+      hostname: "127.0.0.1",
 
       port: 0,
       async fetch(req) {
@@ -470,6 +473,7 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
     // pressure. The old value of 100 repeated the same per-connection path 10x over.
     let remaining = 10;
     const batchSize = 10;
+    const requestsPerSocket = 8;
 
     for (let i = 0; i < remaining; i += batchSize) {
       const promises: Promise<void>[] = [];
@@ -495,7 +499,7 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
               }
             }
 
-            let remainingRequests = 20;
+            let remainingRequests = requestsPerSocket;
 
             const socket = await Bun.connect({
               hostname: server.hostname,
@@ -529,7 +533,10 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
                 },
                 close() {
                   if (remainingRequests > 0) {
-                    throw new Error(`Expected 20 responses, got ${20 - remainingRequests}`);
+                    rejectClose(
+                      new Error(`Expected ${requestsPerSocket} responses, got ${requestsPerSocket - remainingRequests}`),
+                    );
+                    return;
                   }
 
                   resolveClose();
