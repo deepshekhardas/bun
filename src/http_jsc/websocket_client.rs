@@ -2050,6 +2050,7 @@ pub enum ErrorCode {
     ProxyConnectionRefused = 35,
     ProxyTunnelFailed = 36,
     UnexpectedRsv1 = 37,
+    InvalidExtensionsHeader = 38,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
