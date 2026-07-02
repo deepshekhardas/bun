@@ -386,7 +386,7 @@ describe("environmentData", () => {
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
-    expect(out).toBe("foo\n".repeat(5));
+    expect(out).toBe("foo\n".repeat(3));
   });
 
   test("can be used if parent thread had not imported worker_threads", async () => {
