@@ -278,10 +278,9 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-    static bool processIsExiting = false;
-    if (processIsExiting)
+    if (process->m_isExiting)
         return;
-    processIsExiting = true;
+    process->m_isExiting = true;
     auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
@@ -929,8 +928,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
-    int64_t seconds = static_cast<int64_t>(time / 1000000000);
-    int64_t nanoseconds = time % 1000000000;
+    double seconds = static_cast<double>(time / 1000000000);
+    double nanoseconds = static_cast<double>(time % 1000000000);
 
     auto arg0 = callFrame->argument(0);
     if (callFrame->argumentCount() > 0 && !arg0.isUndefined()) {
@@ -945,14 +944,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
         JSValue relativeNanosecondsValue = relativeArray->getIndex(globalObject, 1);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        int64_t relativeSeconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeSecondsValue));
-        int64_t relativeNanoseconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeNanosecondsValue));
-        seconds -= relativeSeconds;
-        nanoseconds -= relativeNanoseconds;
-        if (nanoseconds < 0) {
-            seconds--;
-            nanoseconds += 1000000000;
-        }
+        // Node subtracts the tuple in JS, so the elements go through ToNumber and
+        // non-numeric ones propagate NaN rather than reaching an int64 conversion.
+        double relativeSeconds = relativeSecondsValue.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        double relativeNanoseconds = relativeNanosecondsValue.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        bool needsBorrow = nanoseconds < relativeNanoseconds;
+        seconds = needsBorrow ? seconds - relativeSeconds - 1 : seconds - relativeSeconds;
+        nanoseconds = needsBorrow ? nanoseconds + 1000000000 - relativeNanoseconds : nanoseconds - relativeNanoseconds;
     }
 
     JSC::JSArray* array = nullptr;
@@ -4114,6 +4115,19 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #else
+    // When a title was explicitly set (`--title` CLI flag or a prior
+    // `process.title = ...`), the store is authoritative — the console title
+    // that uv_get_process_title reads is unavailable in console-less
+    // processes (CI) and never reflects the CLI flag.
+    if (Bun__Process__hasTitle()) {
+        BunString str;
+        Bun__Process__getTitle(globalObject, &str);
+        auto value = str.transferToWTFString();
+        auto* result = jsString(vm, WTF::move(value));
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    }
+
     char title[1024];
     title[0] = '\0'; // Initialize buffer to empty string
     if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
@@ -4140,10 +4154,15 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     Bun__Process__setTitle(globalObject, &str);
     return true;
 #else
-    WTF::String str = jsString->value(globalObject);
+    WTF::String wtfStr = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    CString cstr = str.utf8();
-    return uv_set_process_title(cstr.data()) == 0;
+    // Update the store first so the getter reflects the assignment; the uv
+    // call is best-effort (it fails in console-less processes).
+    BunString str = Bun::toStringRef(globalObject, jsString);
+    Bun__Process__setTitle(globalObject, &str);
+    CString cstr = wtfStr.utf8();
+    uv_set_process_title(cstr.data());
+    return true;
 #endif
 }
 
