@@ -63,6 +63,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "hosted_git_info.rs": "install/hosted_git_info.rs",
   "http/H2Client.rs": "http/H2Client.rs",
   "http/H3Client.rs": "http/H3Client.rs",
+  "http/HTTPThread.rs": "http/HTTPThread.rs",
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
   "ipc.rs": "jsc/ipc.rs",

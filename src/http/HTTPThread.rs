@@ -197,12 +197,9 @@ impl HttpThread {
 /// Pooled scratch buffer for assembling the HTTP/1.1 request line, headers
 /// and (as much as fits) the body prefix before the first socket write.
 ///
-/// The reference Zig implementation used a 32 KiB `StackFallbackAllocator`
-/// inline in the `noinline` caller's frame for small requests and a cached
-/// 512 KiB `FixedBufferAllocator` for large ones. Stable Rust cannot back a
-/// `Vec` with a stack or foreign allocator, so instead a single `Vec<u8>` is
-/// parked on [`HttpThread::lazy_request_body_buffer`] between calls and
-/// reused. After warmup, building the request payload is allocation-free.
+/// A single `Vec<u8>` is parked on [`HttpThread::lazy_request_body_buffer`]
+/// between calls and reused, so after warmup building the request payload is
+/// allocation-free.
 pub struct RequestBodyBuffer {
     // Option<> so Drop can `.take()` and return the Vec to the pool by value.
     buffer: Option<Vec<u8>>,

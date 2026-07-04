@@ -432,8 +432,8 @@ export const fetchH3Internals = {
 };
 
 export const httpThreadInternals = {
-  pooledRequestBufferCapacity: $newZigFunction(
-    "http/HTTPThread.zig",
+  pooledRequestBufferCapacity: $newRustFunction(
+    "http/HTTPThread.rs",
     "TestingAPIs.pooledRequestBufferCapacity",
     0,
   ) as () => number,
