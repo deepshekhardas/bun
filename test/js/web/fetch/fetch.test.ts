@@ -3033,3 +3033,31 @@ it("HTTP/1.1 request build buffer is pooled, not reallocated per request", async
   expect(await r3.text()).toBe("ok");
   expect(httpThreadInternals.pooledRequestBufferCapacity()).toBeGreaterThanOrEqual(512 * 1024);
 });
+
+// Serializing the request line + headers is an unbounded `extend_from_slice`
+// into the pooled Vec, so a request with oversized headers grows it past the
+// 512 KiB large tier. That capacity must not be parked in the pool, or one
+// pathological request pins it on the HTTP thread for the whole process.
+it("does not pin an oversized request build buffer in the pool", async () => {
+  const { httpThreadInternals } = internalForTesting;
+  using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  const url = server.url.href;
+  const pooled = () => httpThreadInternals.pooledRequestBufferCapacity();
+
+  const warm = await fetch(url);
+  expect(await warm.text()).toBe("ok");
+  expect(pooled()).toBeGreaterThanOrEqual(32 * 1024);
+
+  // A header value past the large tier. The server rejects headers this big,
+  // but the client has already built (and dropped) the request buffer by then,
+  // which is the thing under test.
+  const huge = Buffer.alloc(768 * 1024, 0x61).toString();
+  await fetch(url, { headers: { "x-huge": huge } }).catch(() => {});
+  expect(pooled()).toBeLessThanOrEqual(512 * 1024);
+
+  // The pool still works for subsequent requests.
+  const after = await fetch(url);
+  expect(await after.text()).toBe("ok");
+  expect(pooled()).toBeGreaterThanOrEqual(32 * 1024);
+  expect(pooled()).toBeLessThanOrEqual(512 * 1024);
+});

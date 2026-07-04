@@ -211,6 +211,12 @@ pub struct RequestBodyBuffer {
 impl Drop for RequestBodyBuffer {
     fn drop(&mut self) {
         if let Some(mut buf) = self.buffer.take() {
+            // Serializing oversized headers grows the Vec past the tier it was
+            // reserved to. Free it rather than pinning that capacity on the
+            // HTTP thread for the rest of the process.
+            if buf.capacity() > REQUEST_BODY_SEND_HEAP_BUFFER_SIZE {
+                return;
+            }
             // SAFETY: HTTP-thread-only access to the global.
             let thread = crate::http_thread_mut();
             if thread.lazy_request_body_buffer.is_none() {
