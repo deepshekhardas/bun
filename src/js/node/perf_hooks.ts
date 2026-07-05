@@ -6,7 +6,7 @@ const {
   eventLoopUtilization: computeEventLoopUtilization,
 } = require("internal/shared");
 
-const getEventLoopUtilizationRaw = $newZigFunction("event_loop.zig", "jsEventLoopUtilization", 0) as () => {
+const getEventLoopUtilizationRaw = $newRustFunction("event_loop.rs", "jsEventLoopUtilization", 0) as () => {
   idle: number;
   active: number;
 };
