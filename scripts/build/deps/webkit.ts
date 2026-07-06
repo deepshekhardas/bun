@@ -8,9 +8,10 @@
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
 //
-// Preview build of oven-sh/WebKit#276 (ICU data: keep the rbnf/ bundles ICU can
-// actually reach). Re-pin to the merged autobuild sha before this lands.
-export const WEBKIT_VERSION = "autobuild-preview-pr-276-b3ca1b76";
+// oven-sh/WebKit#276: ICU data keeps the rbnf/ bundles ICU can actually reach
+// (root/ja/zh/zh_Hant + res_index), fixing Intl.DateTimeFormat on the japanese
+// and chinese calendars.
+export const WEBKIT_VERSION = "e2d48d2249d89a78f65fcc976e7ad4ab2e8eb7d5";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
