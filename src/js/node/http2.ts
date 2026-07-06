@@ -2597,7 +2597,11 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options);
+      // respond() validates headers and can throw (e.g. a connection-specific header); the
+      // stream must still be torn down, so never let that throw skip the destroy below.
+      try {
+        this.respond(headers, options);
+      } catch {}
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -2616,7 +2620,11 @@ function doSendFileFD(options, fd, headers, err, stat) {
       tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options);
+        // respond() validates headers and can throw (e.g. a connection-specific header); the
+        // stream must still be torn down, so never let that throw skip the destroy below.
+        try {
+          this.respond(headers, options);
+        } catch {}
         this.destroy(err);
       }
       return;
