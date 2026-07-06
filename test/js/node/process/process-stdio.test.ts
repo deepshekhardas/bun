@@ -252,6 +252,39 @@ describe.concurrent("process-stdio", () => {
     );
   }
 
+  // A parked write whose callback throws must still settle its report accounting, or
+  // the sink stays parked forever and later writes are reordered for the stream's life.
+  test.skipIf(isWindows)("process.stdout - a throwing parked write callback does not wedge ordering", async () => {
+    using dir = tempDir("stdout-write-order-leak", {});
+    const fifo = path.join(String(dir), "stdout.fifo");
+    expect(spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+
+    const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    let writeFd = fs.openSync(fifo, fs.constants.O_WRONLY);
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "process-stdout-write-order-leak-fixture.js")],
+        stdin: "ignore",
+        stdout: writeFd,
+        stderr: "pipe",
+        env: { ...bunEnv, BUN_TEST_FIFO: fifo },
+      });
+      fs.closeSync(writeFd);
+      writeFd = -1;
+
+      const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const report = stderrText.split("\n").findLast(line => /^\{.*\}$/.test(line));
+      if (report === undefined) {
+        throw new Error(`fixture did not report (exit code ${exitCode}):\n${stderrText}`);
+      }
+      // The later write was issued before the no-op moveCursor, so it must report first.
+      expect({ order: JSON.parse(report).order, exitCode }).toEqual({ order: ["write", "moveCursor"], exitCode: 0 });
+    } finally {
+      if (writeFd !== -1) fs.closeSync(writeFd);
+      fs.closeSync(readFd);
+    }
+  });
+
   // `prelude` defines moveCursor(dx, dy, cb) and cursorTo(x, y, cb) bound to
   // process.stdout, either through node:readline or through tty.WriteStream.
   const cursorOrderFixture = (prelude: string) =>

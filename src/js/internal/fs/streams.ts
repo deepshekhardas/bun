@@ -704,15 +704,20 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           unparkWhenDrained(this);
         })
         .catch(err => {
-          // Always call the callback with the error
-          cb(err);
-          // If no callback was provided, emit the error on the stream
-          // This matches Node.js behavior where unhandled write errors
-          // are emitted as 'error' events on the stream
-          if (!hasCallback) {
-            this.destroy(err);
+          // A throwing cb must not skip the decrement, or the count never reaches zero
+          // and the promise stays parked for the life of the stream.
+          try {
+            // Always call the callback with the error
+            cb(err);
+            // If no callback was provided, emit the error on the stream
+            // This matches Node.js behavior where unhandled write errors
+            // are emitted as 'error' events on the stream
+            if (!hasCallback) {
+              this.destroy(err);
+            }
+          } finally {
+            unparkWhenDrained(this);
           }
-          unparkWhenDrained(this);
         });
       return false; // Indicate backpressure
     } else {
