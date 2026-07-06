@@ -2446,7 +2446,8 @@ it("http2 a request the session rejects never reaches its HPACK encoder", async 
     client.destroy();
     server.close();
   }
-});
+  // ~15 sequential round-trips; give debug+ASAN room on a loaded machine rather than the 5s default.
+}, 30_000 * ASAN_MULTIPLIER);
 
 it("http2 maxSendHeaderBlockLength refuses a request without desyncing the session", async () => {
   // The limit is measured against an upper bound on the encoded size, the same one nghttp2 uses
@@ -2497,7 +2498,8 @@ it("http2 maxSendHeaderBlockLength refuses a request without desyncing the sessi
     client.destroy();
     server.close();
   }
-});
+  // Sequential round-trips; give debug+ASAN room on a loaded machine rather than the 5s default.
+}, 30_000 * ASAN_MULTIPLIER);
 
 it("http2 server resets streams whose request headers contain CR, LF, or NUL octets", async () => {
   // RFC 9113 Section 8.2.1: a request carrying a field value with NUL, CR, or
