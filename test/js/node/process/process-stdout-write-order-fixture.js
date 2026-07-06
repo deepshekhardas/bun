@@ -1,6 +1,6 @@
 // stdout is a FIFO nobody else reads. Fill it until the sink reports backpressure,
-// drain the pipe synchronously, then write once more: that last write is accepted
-// outright while the earlier ones are still parked on the sink's backpressure promise.
+// drain the pipe, then write once more: that last write is accepted outright while
+// the earlier ones are still parked on the sink's backpressure promise.
 //
 // BUN_TEST_MODE perturbs what runs while that promise's reactions are still queued,
 // which is where the reporting order is easy to get wrong:
@@ -32,6 +32,19 @@ function seal() {
 function record(index) {
   order.push(index);
   if (total >= 0 && order.length >= total) resolveDone();
+}
+
+// Empty whatever is currently in the pipe. Non-blocking: returns when it would block.
+function drainPipe() {
+  const scratch = Buffer.alloc(65536);
+  for (;;) {
+    try {
+      if (fs.readSync(readFd, scratch, 0, scratch.length, null) === 0) break;
+    } catch (err) {
+      if (err.code === "EAGAIN") break;
+      throw err;
+    }
+  }
 }
 
 // The re-entrant write, issued from user code that runs while the sink's promise
@@ -66,16 +79,9 @@ while (next < 1024 && parked.length < parkTarget) {
   if (!accepted) parked.push(index);
 }
 
-// Empty the pipe so the next write can flush the sink's whole buffer in one go.
-const scratch = Buffer.alloc(65536);
-for (;;) {
-  try {
-    if (fs.readSync(readFd, scratch, 0, scratch.length, null) === 0) break;
-  } catch (err) {
-    if (err.code === "EAGAIN") break;
-    throw err;
-  }
-}
+// Empty the pipe so the next write is accepted outright while the earlier ones stay
+// parked. The last write's ordering versus those parked callbacks is the point.
+drainPipe();
 
 const last = next++;
 const lastWriteAccepted = process.stdout.write(Buffer.from("."), () => record(last));
@@ -85,8 +91,18 @@ if (reentrant === -1 && mode !== "write-on-drain" && mode !== "write-in-callback
   seal();
 }
 
+// Keep reading on every event-loop turn so the sink can flush its whole buffer and
+// the parked promises settle, whatever the platform's pipe capacity. The pipe is the
+// only thing blocking progress; draining it lets every queued write complete.
+let finished = false;
 done.then(() => {
+  finished = true;
   const payload = { parkedCount: parked.length, lastWriteAccepted, reentrant, order };
   process.stderr.write(JSON.stringify(payload) + "\n");
   process.exit(0);
 });
+
+(function pump() {
+  drainPipe();
+  if (!finished) setImmediate(pump);
+})();

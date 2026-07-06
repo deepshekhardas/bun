@@ -44,16 +44,24 @@ while (parkedIndex === -1) {
 
 drain();
 
+// Keep reading on every event-loop turn so the sink flushes its whole buffer and the
+// parked write's promise settles, whatever the platform's pipe capacity.
+let finished = false;
+(function pump() {
+  drain();
+  if (!finished) setImmediate(pump);
+})();
+
 // Phase two runs once the parked write's promise has settled and its .catch has run.
 settled.promise
   .then(() => new Promise(resolve => setImmediate(resolve)))
   .then(() => {
-    drain(); // make room so phase two's writes are accepted outright, not re-parked
     const order = [];
     let pending = 2;
     const done = name => {
       order.push(name);
       if (--pending === 0) {
+        finished = true;
         fs.writeSync(2, JSON.stringify({ order }) + "\n");
         process.exit(0);
       }
