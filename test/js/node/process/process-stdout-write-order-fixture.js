@@ -16,6 +16,15 @@ function record(index) {
   if (total >= 0 && order.length >= total) resolveDone();
 }
 
+// A listener that throws settles the parked write's callback one microtask later
+// than the sink's promise, so reporting the accepted write from a microtask of
+// its own would overtake it.
+if (process.env.BUN_TEST_THROW_ON_DRAIN) {
+  process.stdout.on("drain", () => {
+    throw new Error("drain listener throws");
+  });
+}
+
 const chunk = Buffer.alloc(4096, 0x61);
 let next = 0;
 let backpressured = false;

@@ -186,43 +186,55 @@ describe.concurrent("process-stdio", () => {
 
   // A write the sink accepts outright must still report completion behind the
   // writes it is already buffering, whose callbacks are parked on a promise.
-  test.skipIf(isWindows)("process.stdout - write callbacks run in write order under backpressure", async () => {
-    using dir = tempDir("stdout-write-order", {});
-    const fifo = path.join(String(dir), "stdout.fifo");
-    expect(spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+  // A throwing 'drain' listener settles the parked callback a microtask later, which
+  // is exactly what a microtask-deep report on the accepted write would overtake.
+  const backpressureCases = [
+    ["", {}],
+    [" (throwing drain listener)", { BUN_TEST_THROW_ON_DRAIN: "1" }],
+  ] as const;
 
-    // Hold the read end open so opening the write end succeeds. Nothing here ever
-    // reads it: the fixture drains the pipe itself, synchronously.
-    const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-    let writeFd = fs.openSync(fifo, fs.constants.O_WRONLY);
-    try {
-      await using proc = spawn({
-        cmd: [bunExe(), path.join(import.meta.dir, "process-stdout-write-order-fixture.js")],
-        stdin: "ignore",
-        stdout: writeFd,
-        stderr: "pipe",
-        env: { ...bunEnv, BUN_TEST_FIFO: fifo },
-      });
-      fs.closeSync(writeFd);
-      writeFd = -1;
+  for (const [suffix, extraEnv] of backpressureCases) {
+    test.skipIf(isWindows)(
+      `process.stdout - write callbacks run in write order under backpressure${suffix}`,
+      async () => {
+        using dir = tempDir("stdout-write-order", {});
+        const fifo = path.join(String(dir), "stdout.fifo");
+        expect(spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
 
-      const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      const lines = stderrText.trim().split("\n");
-      const { backpressured, lastWriteAccepted, order } = JSON.parse(lines[lines.length - 1]);
+        // Hold the read end open so opening the write end succeeds. Nothing here ever
+        // reads it: the fixture drains the pipe itself, synchronously.
+        const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        let writeFd = fs.openSync(fifo, fs.constants.O_WRONLY);
+        try {
+          await using proc = spawn({
+            cmd: [bunExe(), path.join(import.meta.dir, "process-stdout-write-order-fixture.js")],
+            stdin: "ignore",
+            stdout: writeFd,
+            stderr: "pipe",
+            env: { ...bunEnv, BUN_TEST_FIFO: fifo, ...extraEnv },
+          });
+          fs.closeSync(writeFd);
+          writeFd = -1;
 
-      // Guards the setup: without these the fixture never reached the racy path.
-      expect({ backpressured, lastWriteAccepted, wroteEnough: order.length > 2, exitCode }).toEqual({
-        backpressured: true,
-        lastWriteAccepted: true,
-        wroteEnough: true,
-        exitCode: 0,
-      });
-      expect(order).toEqual(Array.from({ length: order.length }, (_, i) => i));
-    } finally {
-      if (writeFd !== -1) fs.closeSync(writeFd);
-      fs.closeSync(readFd);
-    }
-  });
+          const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          const lines = stderrText.trim().split("\n");
+          const { backpressured, lastWriteAccepted, order } = JSON.parse(lines[lines.length - 1]);
+
+          // Guards the setup: without these the fixture never reached the racy path.
+          expect({ backpressured, lastWriteAccepted, wroteEnough: order.length > 2, exitCode }).toEqual({
+            backpressured: true,
+            lastWriteAccepted: true,
+            wroteEnough: true,
+            exitCode: 0,
+          });
+          expect(order).toEqual(Array.from({ length: order.length }, (_, i) => i));
+        } finally {
+          if (writeFd !== -1) fs.closeSync(writeFd);
+          fs.closeSync(readFd);
+        }
+      },
+    );
+  }
 
   // `prelude` defines moveCursor(dx, dy, cb) and cursorTo(x, y, cb) bound to
   // process.stdout, either through node:readline or through tty.WriteStream.

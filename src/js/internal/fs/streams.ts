@@ -708,9 +708,10 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           // from process.nextTick().
           process.nextTick(cb, null);
         } else {
-          // Accepting this write is what drained the sink, so the callbacks parked on
-          // that promise are queued but have not run. Land behind them.
-          const report = () => cb(null);
+          // The callbacks parked on that promise are queued but have not run, and can
+          // settle a microtask deeper than it. A tick lands behind them either way, and
+          // keeps a throwing callback an uncaught exception, not an unhandled rejection.
+          const report = () => process.nextTick(cb, null);
           backpressurePromise.then(report, report);
         }
       }
