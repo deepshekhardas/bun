@@ -184,16 +184,17 @@ describe.concurrent("process-stdio", () => {
     });
   }
 
-  // A write the sink accepts outright must still report completion behind the
-  // writes it is already buffering, whose callbacks are parked on a promise.
-  // A throwing 'drain' listener settles the parked callback a microtask later, which
-  // is exactly what a microtask-deep report on the accepted write would overtake.
-  const backpressureCases = [
-    ["", {}],
-    [" (throwing drain listener)", { BUN_TEST_THROW_ON_DRAIN: "1" }],
+  // A write the sink accepts outright must still report completion behind the writes
+  // it is already buffering, whose callbacks are parked on a promise. Each mode
+  // perturbs what runs while that promise's reactions are still queued.
+  const backpressureModes = [
+    ["", ""],
+    [" (throwing drain listener)", "throw-on-drain"],
+    [" (drain listener writes)", "write-on-drain"],
+    [" (write callback writes)", "write-in-callback"],
   ] as const;
 
-  for (const [suffix, extraEnv] of backpressureCases) {
+  for (const [suffix, mode] of backpressureModes) {
     test.skipIf(isWindows)(
       `process.stdout - write callbacks run in write order under backpressure${suffix}`,
       async () => {
@@ -211,20 +212,28 @@ describe.concurrent("process-stdio", () => {
             stdin: "ignore",
             stdout: writeFd,
             stderr: "pipe",
-            env: { ...bunEnv, BUN_TEST_FIFO: fifo, ...extraEnv },
+            env: { ...bunEnv, BUN_TEST_FIFO: fifo, BUN_TEST_MODE: mode },
           });
           fs.closeSync(writeFd);
           writeFd = -1;
 
           const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
           const lines = stderrText.trim().split("\n");
-          const { backpressured, lastWriteAccepted, order } = JSON.parse(lines[lines.length - 1]);
+          const { backpressured, lastWriteAccepted, reentrant, order } = JSON.parse(lines[lines.length - 1]);
+          const reenters = mode === "write-on-drain" || mode === "write-in-callback";
 
           // Guards the setup: without these the fixture never reached the racy path.
-          expect({ backpressured, lastWriteAccepted, wroteEnough: order.length > 2, exitCode }).toEqual({
+          expect({
+            backpressured,
+            lastWriteAccepted,
+            wroteEnough: order.length > 2,
+            reentered: reentrant !== -1,
+            exitCode,
+          }).toEqual({
             backpressured: true,
             lastWriteAccepted: true,
             wroteEnough: true,
+            reentered: reenters,
             exitCode: 0,
           });
           expect(order).toEqual(Array.from({ length: order.length }, (_, i) => i));

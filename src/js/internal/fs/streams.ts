@@ -683,9 +683,12 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       this[kBackpressurePromise] = maybePromise;
       maybePromise
         .then(() => {
-          if (this[kBackpressurePromise] === maybePromise) this[kBackpressurePromise] = undefined;
+          // Unpark only once the user code below has run. A write re-entered from the
+          // drain listener or from cb has to chain onto this promise too, or it overtakes
+          // the reports still queued on it.
           this.emit("drain"); // Emit drain event
           cb(null);
+          if (this[kBackpressurePromise] === maybePromise) this[kBackpressurePromise] = undefined;
         })
         .catch(err => {
           if (this[kBackpressurePromise] === maybePromise) this[kBackpressurePromise] = undefined;
