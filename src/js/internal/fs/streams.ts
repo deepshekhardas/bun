@@ -31,6 +31,7 @@ type FSStream = import("node:fs").ReadStream &
      */
     [kWriteStreamFastPath]?: undefined | true | FileSink;
     [kBackpressurePromise]?: undefined | Promise<number>;
+    [kPendingReports]?: number;
   };
 type FD = number;
 
@@ -46,8 +47,12 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
-// The promise the sink handed back for the writes it is still buffering, if any.
+// The promise the sink handed back for the writes it is still buffering, if any,
+// and how many completion reports are still queued on it. The sink hands back the
+// same promise for every write it parks, so counting is the only way to know when
+// the last of them has reported.
 const kBackpressurePromise = Symbol("kBackpressurePromise");
+const kPendingReports = Symbol("kPendingReports");
 const kFs = Symbol("kFs");
 
 const {
@@ -494,6 +499,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (fastPath) {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this[kBackpressurePromise] = undefined;
+    this[kPendingReports] = 0;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
@@ -658,6 +664,13 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
 }
 
+// Every report queued on the parked promise decrements on its way out. Only the last
+// one unparks, so a write accepted while any of them is still queued chains behind it
+// rather than reporting from a tick of its own.
+function unparkWhenDrained(stream: FSStream) {
+  if (--stream[kPendingReports]! === 0) stream[kBackpressurePromise] = undefined;
+}
+
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
@@ -679,19 +692,18 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     if ($isPromise(maybePromise)) {
       // The sink drains in FIFO order, so what it is still buffering completes before
       // anything written after it. Park that promise: a write the sink later accepts
-      // outright must report completion behind the callbacks waiting on it.
+      // outright must report completion behind the reports already queued on it.
       this[kBackpressurePromise] = maybePromise;
+      this[kPendingReports]!++;
       maybePromise
         .then(() => {
-          // Unpark only once the user code below has run. A write re-entered from the
-          // drain listener or from cb has to chain onto this promise too, or it overtakes
-          // the reports still queued on it.
+          // Unpark after the user code below, never before: a write re-entered from the
+          // drain listener or from cb has to chain onto this promise too.
           this.emit("drain"); // Emit drain event
           cb(null);
-          if (this[kBackpressurePromise] === maybePromise) this[kBackpressurePromise] = undefined;
+          unparkWhenDrained(this);
         })
         .catch(err => {
-          if (this[kBackpressurePromise] === maybePromise) this[kBackpressurePromise] = undefined;
           // Always call the callback with the error
           cb(err);
           // If no callback was provided, emit the error on the stream
@@ -700,6 +712,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           if (!hasCallback) {
             this.destroy(err);
           }
+          unparkWhenDrained(this);
         });
       return false; // Indicate backpressure
     } else {
@@ -711,10 +724,14 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           // from process.nextTick().
           process.nextTick(cb, null);
         } else {
-          // The callbacks parked on that promise are queued but have not run, and can
-          // settle a microtask deeper than it. A tick lands behind them either way, and
-          // keeps a throwing callback an uncaught exception, not an unhandled rejection.
-          const report = () => process.nextTick(cb, null);
+          // The reports already queued on that promise can settle a microtask deeper
+          // than it. A tick lands behind them either way, and keeps a throwing callback
+          // an uncaught exception, not an unhandled rejection.
+          this[kPendingReports]!++;
+          const report = () => {
+            process.nextTick(cb, null);
+            unparkWhenDrained(this);
+          };
           backpressurePromise.then(report, report);
         }
       }

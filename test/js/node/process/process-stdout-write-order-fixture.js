@@ -1,17 +1,21 @@
-// stdout is a FIFO nobody else reads. Fill it until the sink reports
-// backpressure, drain the pipe synchronously, then write once more: that last
-// write is accepted outright while the previous one is still parked on the
-// sink's backpressure promise.
+// stdout is a FIFO nobody else reads. Fill it until the sink reports backpressure,
+// drain the pipe synchronously, then write once more: that last write is accepted
+// outright while the earlier ones are still parked on the sink's backpressure promise.
 //
-// BUN_TEST_MODE perturbs what runs while that promise's reactions are still
-// queued, which is where the reporting order is easy to get wrong:
-//   throw-on-drain    a 'drain' listener throws, settling the parked write's
-//                     callback one microtask later than the promise itself
-//   write-on-drain    a 'drain' listener writes
-//   write-in-callback the parked write's own callback writes
+// BUN_TEST_MODE perturbs what runs while that promise's reactions are still queued,
+// which is where the reporting order is easy to get wrong:
+//   throw-on-drain       a 'drain' listener throws, settling the parked write's
+//                        callback one microtask later than the promise itself
+//   write-on-drain       a 'drain' listener writes
+//   write-in-callback    the parked write's own callback writes
+//   two-parked-in-cb     two writes park on the same promise (the sink hands back the
+//                        same one for both), and the second one's callback writes
 const fs = require("node:fs");
 
 const mode = process.env.BUN_TEST_MODE ?? "";
+// The sink hands the same promise to every write it parks, so reaching the second
+// one means writing past the first `false` rather than stopping at it.
+const parkTarget = mode === "two-parked-in-cb" ? 2 : 1;
 const readFd = fs.openSync(process.env.BUN_TEST_FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
 
 const order = [];
@@ -49,19 +53,17 @@ if (mode === "throw-on-drain") {
 }
 
 const chunk = Buffer.alloc(4096, 0x61);
-let parked = -1;
-let backpressured = false;
-while (next < 1024) {
+const parked = [];
+while (next < 1024 && parked.length < parkTarget) {
   const index = next++;
   const accepted = process.stdout.write(chunk, () => {
     record(index);
-    if (mode === "write-in-callback" && index === parked) writeReentrant();
+    const reenterAt = parked[parkTarget - 1];
+    if ((mode === "write-in-callback" || mode === "two-parked-in-cb") && index === reenterAt) {
+      writeReentrant();
+    }
   });
-  if (!accepted) {
-    parked = index;
-    backpressured = true;
-    break;
-  }
+  if (!accepted) parked.push(index);
 }
 
 // Empty the pipe so the next write can flush the sink's whole buffer in one go.
@@ -79,9 +81,12 @@ const last = next++;
 const lastWriteAccepted = process.stdout.write(Buffer.from("."), () => record(last));
 
 // The re-entrant modes seal once their extra write is issued.
-if (mode !== "write-on-drain" && mode !== "write-in-callback") seal();
+if (reentrant === -1 && mode !== "write-on-drain" && mode !== "write-in-callback" && mode !== "two-parked-in-cb") {
+  seal();
+}
 
 done.then(() => {
-  process.stderr.write(JSON.stringify({ backpressured, lastWriteAccepted, reentrant, order }) + "\n");
+  const payload = { parkedCount: parked.length, lastWriteAccepted, reentrant, order };
+  process.stderr.write(JSON.stringify(payload) + "\n");
   process.exit(0);
 });

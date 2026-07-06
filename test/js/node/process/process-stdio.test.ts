@@ -188,13 +188,14 @@ describe.concurrent("process-stdio", () => {
   // it is already buffering, whose callbacks are parked on a promise. Each mode
   // perturbs what runs while that promise's reactions are still queued.
   const backpressureModes = [
-    ["", ""],
-    [" (throwing drain listener)", "throw-on-drain"],
-    [" (drain listener writes)", "write-on-drain"],
-    [" (write callback writes)", "write-in-callback"],
+    ["", "", 1],
+    [" (throwing drain listener)", "throw-on-drain", 1],
+    [" (drain listener writes)", "write-on-drain", 1],
+    [" (write callback writes)", "write-in-callback", 1],
+    [" (two writes parked, second callback writes)", "two-parked-in-cb", 2],
   ] as const;
 
-  for (const [suffix, mode] of backpressureModes) {
+  for (const [suffix, mode, parkTarget] of backpressureModes) {
     test.skipIf(isWindows)(
       `process.stdout - write callbacks run in write order under backpressure${suffix}`,
       async () => {
@@ -219,18 +220,18 @@ describe.concurrent("process-stdio", () => {
 
           const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
           const lines = stderrText.trim().split("\n");
-          const { backpressured, lastWriteAccepted, reentrant, order } = JSON.parse(lines[lines.length - 1]);
-          const reenters = mode === "write-on-drain" || mode === "write-in-callback";
+          const { parkedCount, lastWriteAccepted, reentrant, order } = JSON.parse(lines[lines.length - 1]);
+          const reenters = mode !== "" && mode !== "throw-on-drain";
 
           // Guards the setup: without these the fixture never reached the racy path.
           expect({
-            backpressured,
+            parkedCount,
             lastWriteAccepted,
             wroteEnough: order.length > 2,
             reentered: reentrant !== -1,
             exitCode,
           }).toEqual({
-            backpressured: true,
+            parkedCount: parkTarget,
             lastWriteAccepted: true,
             wroteEnough: true,
             reentered: reenters,
