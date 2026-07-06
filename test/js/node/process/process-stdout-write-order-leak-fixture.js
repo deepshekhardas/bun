@@ -8,12 +8,27 @@
 const fs = require("node:fs");
 const readline = require("node:readline");
 
-// The parked write's callback throws on success (.then) and again on the error re-run
-// (.catch), so swallow both so the process survives to phase two.
+// The parked write's callback throws on success (.then, cb(null)) and again on the
+// error re-run (.catch, cb(err)). That second throw becomes an unhandled rejection,
+// which fires after the .catch body's finally has run or been skipped: the exact
+// point phase two needs to observe, with no wall-clock wait.
+const settled = Promise.withResolvers();
 process.on("uncaughtException", () => {});
-process.on("unhandledRejection", () => {});
+process.on("unhandledRejection", () => settled.resolve());
 
 const readFd = fs.openSync(process.env.BUN_TEST_FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+
+function drain() {
+  const scratch = Buffer.alloc(65536);
+  for (;;) {
+    try {
+      if (fs.readSync(readFd, scratch, 0, scratch.length, null) === 0) break;
+    } catch (err) {
+      if (err.code === "EAGAIN") break;
+      throw err;
+    }
+  }
+}
 
 const chunk = Buffer.alloc(4096, 0x61);
 let parkedIndex = -1;
@@ -27,27 +42,22 @@ while (parkedIndex === -1) {
   if (!accepted) parkedIndex = i;
 }
 
-const scratch = Buffer.alloc(65536);
-for (;;) {
-  try {
-    if (fs.readSync(readFd, scratch, 0, scratch.length, null) === 0) break;
-  } catch (err) {
-    if (err.code === "EAGAIN") break;
-    throw err;
-  }
-}
+drain();
 
-// setTimeout runs after the parked write's promise has settled (and leaked, if buggy).
-setTimeout(() => {
-  const order = [];
-  let pending = 2;
-  const done = name => {
-    order.push(name);
-    if (--pending === 0) {
-      fs.writeSync(2, JSON.stringify({ order }) + "\n");
-      process.exit(0);
-    }
-  };
-  process.stdout.write("A", () => done("write"));
-  readline.moveCursor(process.stdout, 0, 0, () => done("moveCursor"));
-}, 50);
+// Phase two runs once the parked write's promise has settled and its .catch has run.
+settled.promise
+  .then(() => new Promise(resolve => setImmediate(resolve)))
+  .then(() => {
+    drain(); // make room so phase two's writes are accepted outright, not re-parked
+    const order = [];
+    let pending = 2;
+    const done = name => {
+      order.push(name);
+      if (--pending === 0) {
+        fs.writeSync(2, JSON.stringify({ order }) + "\n");
+        process.exit(0);
+      }
+    };
+    process.stdout.write("A", () => done("write"));
+    readline.moveCursor(process.stdout, 0, 0, () => done("moveCursor"));
+  });
