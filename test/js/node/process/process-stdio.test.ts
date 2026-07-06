@@ -219,8 +219,17 @@ describe.concurrent("process-stdio", () => {
           writeFd = -1;
 
           const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-          const lines = stderrText.trim().split("\n");
-          const { parkedCount, lastWriteAccepted, reentrant, order } = JSON.parse(lines[lines.length - 1]);
+          // A fixture that died before reporting leaves its crash here instead. Say so,
+          // rather than letting JSON.parse bury it under a syntax error.
+          const report = stderrText
+            .trim()
+            .split("\n")
+            .findLast(Boolean)
+            ?.match(/^\{.*\}$/)?.[0];
+          if (report === undefined) {
+            throw new Error(`fixture did not report (exit code ${exitCode}):\n${stderrText}`);
+          }
+          const { parkedCount, lastWriteAccepted, reentrant, order } = JSON.parse(report);
           const reenters = mode !== "" && mode !== "throw-on-drain";
 
           // Guards the setup: without these the fixture never reached the racy path.
