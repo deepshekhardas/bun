@@ -219,13 +219,10 @@ describe.concurrent("process-stdio", () => {
           writeFd = -1;
 
           const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-          // A fixture that died before reporting leaves its crash here instead. Say so,
-          // rather than letting JSON.parse bury it under a syntax error.
-          const report = stderrText
-            .trim()
-            .split("\n")
-            .findLast(Boolean)
-            ?.match(/^\{.*\}$/)?.[0];
+          // Scan back for the report: a sanitizer build can print after the fixture has
+          // already written it. A fixture that died before reporting leaves its crash here
+          // instead, which is worth saying rather than burying it in a parse error.
+          const report = stderrText.split("\n").findLast(line => /^\{.*\}$/.test(line));
           if (report === undefined) {
             throw new Error(`fixture did not report (exit code ${exitCode}):\n${stderrText}`);
           }
