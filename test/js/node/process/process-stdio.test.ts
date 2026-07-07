@@ -226,19 +226,19 @@ describe.concurrent("process-stdio", () => {
           if (report === undefined) {
             throw new Error(`fixture did not report (exit code ${exitCode}):\n${stderrText}`);
           }
-          const { parkedCount, lastWriteAccepted, reentrant, order } = JSON.parse(report);
+          const { parkedCount, reentrant, order } = JSON.parse(report);
           const reenters = mode !== "" && mode !== "throw-on-drain";
 
           // Guards the setup: without these the fixture never reached the racy path.
+          // Whether the trailing write is accepted outright or itself parks depends on
+          // the platform's pipe capacity, so it is not asserted; the order is what holds.
           expect({
             parkedCount,
-            lastWriteAccepted,
             wroteEnough: order.length > 2,
             reentered: reentrant !== -1,
             exitCode,
           }).toEqual({
             parkedCount: parkTarget,
-            lastWriteAccepted: true,
             wroteEnough: true,
             reentered: reenters,
             exitCode: 0,
