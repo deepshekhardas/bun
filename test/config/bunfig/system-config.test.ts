@@ -393,6 +393,8 @@ describe("system-wide bunfig.toml", () => {
   // applied "on every command path, including compiled standalone binaries").
   // The binary is built without a preload; the system config's preload runs
   // only because boot_standalone loaded it at runtime.
+  // Higher per-test timeout because `bun build --compile` copies + rewrites the
+  // entire bun binary (~1GB under debug+ASAN), which blows the 5s default.
   test("compiled standalone binary honors BUN_SYSTEM_CONFIG", async () => {
     using dir = tempDir("system-bunfig-standalone", {
       "system-bunfig.toml": `preload = ["./sys-preload.ts"]`,
@@ -426,5 +428,5 @@ describe("system-wide bunfig.toml", () => {
     expect(stdout).toContain("SYSTEM_PRELOAD_RAN");
     expect(stdout).toContain("app ran");
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 });
