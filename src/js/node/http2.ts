@@ -4031,7 +4031,7 @@ class ServerHttp2Session extends Http2Session {
     }
   }
 
-  destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
+  destroy(error?: Error | number, code?: number) {
     const server = this[kServer];
     if (server) {
       server[kSessions].delete(this);
