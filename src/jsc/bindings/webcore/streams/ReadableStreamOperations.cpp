@@ -986,7 +986,11 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
-    RELEASE_AND_RETURN(scope, readableStreamReaderGenericCancel(globalObject, reader, reason));
+    auto* result = readableStreamReaderGenericCancel(globalObject, reader, reason);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    readableStreamDefaultReaderRelease(globalObject, reader);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return result;
 }
 
 void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
@@ -1018,6 +1022,8 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
             RETURN_IF_EXCEPTION(scope, void());
             if (cancelResult)
                 markPromiseAsHandled(vm, cancelResult);
+            readableStreamDefaultReaderRelease(globalObject, reader);
+            RETURN_IF_EXCEPTION(scope, void());
         }
         return;
     }
@@ -1038,6 +1044,7 @@ void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStr
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
         return;
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     auto* decoded = streamingUTF8Decode(globalObject, {}, controller->m_algorithms.textDecodeState, /* flush */ true);
     RETURN_IF_EXCEPTION(scope, void());
     if (decoded && decoded->length()) {
@@ -1046,6 +1053,10 @@ void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStr
     }
     readableStreamDefaultControllerClose(globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
+    if (reader) {
+        readableStreamDefaultReaderRelease(globalObject, reader);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 // Bun: `$structuredCloneForStream(chunk)` — the shared native host function installed as a
