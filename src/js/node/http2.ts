@@ -2360,11 +2360,13 @@ class Http2Stream extends Duplex {
     if (!rstCode) {
       const sessionCode = (session && (session[kGoawayCode] || session[kDestroyCode])) || 0;
       if (err != null) {
-        if (err.code === "ABORT_ERR") {
+        if (sessionCode) {
+          rstCode = sessionCode;
+        } else if (err.code === "ABORT_ERR") {
           // Enables using AbortController to cancel requests with RST code 8.
           rstCode = NGHTTP2_CANCEL;
         } else {
-          rstCode = sessionCode || NGHTTP2_INTERNAL_ERROR;
+          rstCode = NGHTTP2_INTERNAL_ERROR;
         }
       } else {
         rstCode = sessionCode;
@@ -3703,14 +3705,10 @@ class ServerHttp2Session extends Http2Session {
   }
   #onError(error: Error) {
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
-      // An unobserved transport teardown (the peer dropped a connection
-      // nobody is listening to anymore): destroy quietly - the destroy still
-      // errors any remaining streams - instead of re-emitting on a session
-      // with no 'error' listener and crashing the process. (The server
-      // attaches sessionOnError at accept time, so this branch only matters
-      // for standalone sessions.) Anything that is not teardown noise keeps
-      // Node's EventEmitter contract and surfaces when unobserved.
-      this.destroy();
+      // An unobserved transport teardown: swallow the session error but mark active streams
+      // cancelled (rstCode=8) so a mid-flight request is not mistaken for clean completion.
+      // (sessionOnError is attached at accept time, so this matters only for standalone sessions.)
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     this.destroy(error);
@@ -4533,16 +4531,14 @@ class ClientHttp2Session extends Http2Session {
     this[kSocketTeardown] = true;
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
-      this.destroy();
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
-      // A transport teardown on a session nobody observes (an idle pooled
-      // connection dropped by the peer): shut down quietly - the destroy
-      // still errors any remaining streams. Anything else (handshake
-      // failure, ECONNREFUSED, ...) keeps Node's EventEmitter contract and
-      // surfaces when unobserved.
-      this.destroy();
+      // An idle pooled connection reset by the peer with nobody listening: swallow the session
+      // error but still mark active streams cancelled (rstCode=8) so a mid-flight request is not
+      // mistaken for a clean completion. Anything else keeps the EventEmitter contract.
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     this.destroy(error);
