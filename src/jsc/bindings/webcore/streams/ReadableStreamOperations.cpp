@@ -1027,8 +1027,10 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
             RETURN_IF_EXCEPTION(scope, void());
             if (cancelResult)
                 markPromiseAsHandled(vm, cancelResult);
-            readableStreamDefaultReaderRelease(globalObject, reader);
-            RETURN_IF_EXCEPTION(scope, void());
+            if (reader->m_stream) {
+                readableStreamDefaultReaderRelease(globalObject, reader);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
         return;
     }
@@ -1058,7 +1060,10 @@ void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStr
     }
     readableStreamDefaultControllerClose(globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
-    if (reader) {
+    // The flush enqueue above can tail-call callPullIfNeeded and re-enter
+    // closeSteps (source is already Closed), whose inner call releases the
+    // reader; guard against a second release on an already-released reader.
+    if (reader && reader->m_stream) {
         readableStreamDefaultReaderRelease(globalObject, reader);
         RETURN_IF_EXCEPTION(scope, void());
     }
