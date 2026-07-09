@@ -8066,7 +8066,7 @@ impl H2FrameParser {
             // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
-            // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
+            // abort cancels peer-initiated streams only (server: odd ids, client: even ids)
             if this.is_server.get() {
                 if stream.id % 2 == 0 {
                     continue;
