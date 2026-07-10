@@ -269,29 +269,17 @@ describe("execArgv option", async () => {
   // Each case boots a subprocess plus a worker VM, which can exceed the
   // default 5s timeout on loaded debug/ASAN machines; the ceilings below are
   // pure headroom (the cases run in well under a second normally).
-  it(
-    "inherits the parent's execArgv when falsy or unspecified",
-    async () => {
-      await run("null", '["--smol"]\n');
-      await run("0", '["--smol"]\n');
-    },
-    60_000,
-  );
-  it(
-    "provides empty execArgv when passed an empty array",
-    async () => {
-      // empty array should result in empty execArgv, not inherited from parent thread
-      await run("[]", "[]\n");
-    },
-    60_000,
-  );
-  it(
-    "can specify an array of strings",
-    async () => {
-      await run('["--no-warnings"]', '["--no-warnings"]\n');
-    },
-    60_000,
-  );
+  it("inherits the parent's execArgv when falsy or unspecified", async () => {
+    await run("null", '["--smol"]\n');
+    await run("0", '["--smol"]\n');
+  }, 60_000);
+  it("provides empty execArgv when passed an empty array", async () => {
+    // empty array should result in empty execArgv, not inherited from parent thread
+    await run("[]", "[]\n");
+  }, 60_000);
+  it("can specify an array of strings", async () => {
+    await run('["--no-warnings"]', '["--no-warnings"]\n');
+  }, 60_000);
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
