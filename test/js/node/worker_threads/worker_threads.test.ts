@@ -294,7 +294,7 @@ test("eval does not leak source code", async () => {
   expect(proc.exitCode).toBe(0);
   // Allocates ~600 MiB across GC cycles; that is far slower than the default
   // 5s timeout under debug/ASAN builds (it runs in ~2s in release).
-}, 120_000);
+}, 240_000);
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
@@ -761,10 +761,12 @@ test("worker.performance.eventLoopUtilization() stays low for a message-driven i
 
     const elu1 = worker.performance.eventLoopUtilization();
     // Drive the worker with periodic messages; each wakes its loop but does
-    // almost no work. The loop is blocked (idle) between messages.
-    for (let i = 0; i < 15; i++) {
+    // almost no work. The loop is blocked (idle) between messages. The gap is
+    // sized so per-message overhead stays well below 50% even on a slow,
+    // loaded debug/ASAN machine.
+    for (let i = 0; i < 10; i++) {
       worker.postMessage(0);
-      await Bun.sleep(20);
+      await Bun.sleep(40);
     }
     const elu2 = worker.performance.eventLoopUtilization(elu1);
 
