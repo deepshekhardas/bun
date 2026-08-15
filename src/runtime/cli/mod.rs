@@ -821,7 +821,10 @@ pub mod command {
     fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
+            // Windows paths are case-insensitive: `bunx.EXE` (e.g. produced by
+            // PATHEXT resolution) must be recognized the same as `bunx.exe`.
+            return strings::ends_with_case_insensitive_ascii(argv0, b"bunx.exe")
+                || strings::ends_with_case_insensitive_ascii(argv0, b"bunx");
         }
         #[cfg(not(windows))]
         {
@@ -832,7 +835,10 @@ pub mod command {
     fn is_node(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
+            // Windows paths are case-insensitive: `NODE.EXE` must be
+            // recognized the same as `node.exe`.
+            return strings::ends_with_case_insensitive_ascii(argv0, b"node.exe")
+                || strings::ends_with_case_insensitive_ascii(argv0, b"node");
         }
         #[cfg(not(windows))]
         {
