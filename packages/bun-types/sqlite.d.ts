@@ -627,7 +627,7 @@ declare module "bun:sqlite" {
      * // => [{bar: "baz"}]
      *
      * stmt.all();
-     * // => []
+     * // => [{bar: "baz"}]
      *
      * stmt.all("foo");
      * // => [{bar: "foo"}]
@@ -650,7 +650,7 @@ declare module "bun:sqlite" {
      * // => {bar: "baz"}
      *
      * stmt.get();
-     * // => null
+     * // => {bar: "baz"}
      *
      * stmt.get("foo");
      * // => {bar: "foo"}
