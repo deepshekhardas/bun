@@ -5007,7 +5007,7 @@ declare module "bun" {
 
   interface WebSocketEventMap {
     close: CloseEvent;
-    error: Event;
+    error: ErrorEvent;
     message: MessageEvent;
     open: Event;
   }
